@@ -1,19 +1,27 @@
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
     class TnsGateway < Gateway
+      class_attribute :live_na_url, :live_ap_url
+
       self.display_name = 'TNS'
       self.homepage_url = 'http://www.tnsi.com/'
 
       # Testing is partitioned by account.
-      self.live_url = 'https://secure.na.tnspayments.com/api/rest/version/22/'
+      self.live_na_url = 'https://secure.na.tnspayments.com/api/rest/version/22/'
+      self.live_ap_url = 'https://secure.ap.tnspayments.com/api/rest/version/22/'
 
       self.supported_countries = %w(AR AU BR FR DE HK MX NZ SG GB US)
 
       self.default_currency = 'USD'
       self.supported_cardtypes = [:visa, :master, :american_express, :discover, :diners_club, :jcb, :maestro, :laser]
 
+      self.ssl_version = :TLSv1
+
       def initialize(options={})
         requires!(options, :userid, :password)
+
+        options[:region] = 'north_america' unless options[:region]
+
         super
       end
 
@@ -118,11 +126,11 @@ module ActiveMerchant #:nodoc:
           billing[:address][:city]          = billing_address[:city]
           billing[:address][:stateProvince] = billing_address[:state]
           billing[:address][:postcodeZip]   = billing_address[:zip]
-          billing[:address][:country]       = billing_address[:country]
+          billing[:address][:country]       = country_code(billing_address[:country])
           billing[:phone]                   = billing_address[:phone]
 
           customer[:email]                  = options[:email] if options[:email]
-          customer[:ipaddress]              = options[:ip] if options[:ip]
+          customer[:ipAddress]              = options[:ip] if options[:ip]
         end
 
         if(shipping_address = options[:shipping_address])
@@ -132,15 +140,23 @@ module ActiveMerchant #:nodoc:
           shipping[:address][:city]          = shipping_address[:city]
           shipping[:address][:stateProvince] = shipping_address[:state]
           shipping[:address][:postcodeZip]   = shipping_address[:zip]
-          shipping[:address][:shipcountry]   = shipping_address[:country]
+          shipping[:address][:shipcountry]   = country_code(shipping_address[:country])
 
-          last_name, first_middle_names = split_name(shipping_address[:name])
-          shipping[:firstName]  = first_middle_names if first_middle_names
+          first_name, last_name = split_names(shipping_address[:name])
+          shipping[:firstName]  = first_name if first_name
           shipping[:lastName]   = last_name if last_name
         end
         post[:billing].merge!(billing)
         post[:shipping].merge!(shipping)
         post[:customer].merge!(customer)
+      end
+
+      def country_code(country)
+        if country
+          country = ActiveMerchant::Country.find(country)
+          country.code(:alpha3).value
+        end
+      rescue InvalidCountryCodeError
       end
 
       def commit(action, post)
@@ -150,8 +166,11 @@ module ActiveMerchant #:nodoc:
           'Content-Type' => 'application/json',
         }
         post[:apiOperation] = action.upcase
-        raw = parse(ssl_request(:put, url, build_request(post), headers))
-
+        begin
+          raw = parse(ssl_request(:put, url, build_request(post), headers))
+        rescue ResponseError => e
+          raw = parse(e.response.body)
+        end
         succeeded = success_from(raw['result'])
         Response.new(
           succeeded,
@@ -163,7 +182,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def build_url(orderid, transactionid)
-        "#{live_url}merchant/#{@options[:userid]}/order/#{orderid}/transaction/#{transactionid}"
+        base_url = @options[:region] == 'asia_pacific' ? live_ap_url : live_na_url
+        "#{base_url}merchant/#{@options[:userid]}/order/#{orderid}/transaction/#{transactionid}"
       end
 
       def build_request(post = {})
@@ -215,12 +235,6 @@ module ActiveMerchant #:nodoc:
         orderid, prev_transactionid = split_authorization(authorization)
         next_transactionid = SecureRandom.uuid
         [orderid, next_transactionid, prev_transactionid]
-      end
-
-      def split_name(full_name)
-        return nil unless full_name
-        names = full_name.split
-        [names.pop, names.join(' ')]
       end
     end
   end

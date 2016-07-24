@@ -25,6 +25,7 @@ module ActiveMerchant #:nodoc:
       self.supported_cardtypes = [:visa, :master, :american_express, :diners_club, :jcb]
 
       self.money_format = :cents
+      self.currencies_without_fractions = %w(IDR)
 
       # The homepage URL of the gateway
       self.homepage_url = 'http://mastercard.com/mastercardsps'
@@ -58,7 +59,8 @@ module ActiveMerchant #:nodoc:
         requires!(options, :order_id)
 
         post = {}
-        post[:Amount] = amount(money)
+
+        add_amount(post, money, options)
         add_invoice(post, options)
         add_creditcard(post, creditcard)
         add_standard_parameters('pay', post, options[:unique_id])
@@ -78,7 +80,8 @@ module ActiveMerchant #:nodoc:
         requires!(@options, :advanced_login, :advanced_password)
 
         post = options.merge(:TransNo => authorization)
-        post[:Amount] = amount(money)
+
+        add_amount(post, money, options)
         add_advanced_user(post)
         add_standard_parameters('capture', post, options[:unique_id])
 
@@ -93,9 +96,21 @@ module ActiveMerchant #:nodoc:
         requires!(@options, :advanced_login, :advanced_password)
 
         post = options.merge(:TransNo => authorization)
-        post[:Amount] = amount(money)
+
+        add_amount(post, money, options)
         add_advanced_user(post)
         add_standard_parameters('refund', post, options[:unique_id])
+
+        commit(post)
+      end
+
+      def void(authorization, options = {})
+        requires!(@options, :advanced_login, :advanced_password)
+
+        post = options.merge(:TransNo => authorization)
+
+        add_advanced_user(post)
+        add_standard_parameters('voidAuthorisation', post, options[:unique_id])
 
         commit(post)
       end
@@ -143,7 +158,8 @@ module ActiveMerchant #:nodoc:
         requires!(@options, :secure_hash)
 
         post = {}
-        post[:Amount] = amount(money)
+
+        add_amount(post, money, options)
         add_invoice(post, options)
         add_creditcard_type(post, options[:card_type]) if options[:card_type]
 
@@ -183,6 +199,11 @@ module ActiveMerchant #:nodoc:
       end
 
       private
+
+      def add_amount(post, money, options)
+        post[:Amount] = localized_amount(money, options[:currency])
+        post[:Currency] = options[:currency] if options[:currency]
+      end
 
       def add_advanced_user(post)
         post[:User] = @options[:advanced_login]
